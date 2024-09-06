@@ -15,8 +15,8 @@ library(stringr)
 library(tximport)
 
 # Clinical data
-clin_PD1 <- read_excel("files/1-s2.0-S1535610819300376-mmc2.xlsx")
-clin_IPIPD1 <- read_excel("files/1-s2.0-S1535610819300376-mmc3.xlsx")
+clin_PD1 <- read_excel("files/1-s2.0-S1535610819300376-mmc2.xlsx") # anti-PD-1 monotherapy (Treatmnest: "Nivolumab" or "Pembrolizumab")
+clin_IPIPD1 <- read_excel("files/1-s2.0-S1535610819300376-mmc3.xlsx")  # ombined anti-PD-1 and anti-CTLA-4 immunotherapy (Treatmnest: "Ipilimumab + Pembrolizumab" or "Ipilimumab + Nivolumab")
 mapping <- read.csv("files/filereport_read_run_PRJEB23709_tsv.txt", sep = "\t")
 
 # Clean clinical data
