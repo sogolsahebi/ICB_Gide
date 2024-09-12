@@ -78,6 +78,9 @@ clin <- add_column(clin, treatmentid=annotate_drug('Gide', clin$drug_type, annot
 clin$drug_type[clin$treatmentid == "Nivolumab" | clin$treatmentid == "Pembrolizumab"] <- 'PD-1/PD-L1'
 clin$drug_type[clin$treatmentid == "Ipilimumab + Pembrolizumab" | clin$treatmentid == "Ipilimumab + Nivolumab"] <- 'IO+combo'
 
+# Set "treatment_timepoint
+colnames(clin)[colnames(clin) == "RNA.Sequencing"] <- "treatment_timepoint"
+
 # Replace empty string values with NA
 clin[clin == "-"] <- NA
 
