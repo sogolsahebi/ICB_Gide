@@ -1,7 +1,7 @@
 # Format_Data Processing 
 # Format_EXPR.R
 # Goal: 
-# - Creates "CLIN.txt" with dimensions 91 x 38
+# - Creates "CLIN.txt" with dimensions 91 x 39
 # - Creates cased_sequenced.csv: dimensions 91 x 4
 # - Creates EXPR_gene_tpm.csv, EXPR_gene_counts.csv, EXPR_tx_tpm.csv, EXPR_tx_counts.csv 
 #   - EXPR_gene_tpm.csv: dimensions 61,544 x 91
@@ -27,7 +27,7 @@ library(tibble)
 # annot_dir <- args[3]
 
 ## 1. Get Clinical Data (CLIN.csv)
-clin_orginal <- read.csv("files/CLIN.txt", stringsAsFactors=FALSE, sep="\t", dec=',') # 91 x 25
+clin_orginal <- read.csv("files/CLIN.txt", stringsAsFactors=FALSE, sep="\t", dec=',') # 91 x 26
 
 selected_cols <- c("patient" , "Age..Years." , "Sex" , "Treatment" , "Best.RECIST.response" , 
                    "Progression.Free.Survival..Days." , "Overall.Survival..Days." , "Progressed" , "Last.Followup.Status")
