@@ -79,20 +79,17 @@ clin$drug_type[clin$treatmentid == "Nivolumab" | clin$treatmentid == "Pembrolizu
 clin$drug_type[clin$treatmentid == "Ipilimumab + Pembrolizumab" | clin$treatmentid == "Ipilimumab + Nivolumab"] <- 'IO+combo'
 
 # Set "treatment_timepoint
-colnames(clin)[colnames(clin) == "RNA.Sequencing"] <- "treatment_timepoint"
+clin$treatment_timepoint <- gsub("EDT", "POST", clin$RNA.Sequencing)
+clin$treatment_timepoint[clin$treatment_timepoint == "PRE and POST"] <- "PRE and POST"
 
 # Replace empty string values with NA
 clin[clin == "-"] <- NA
-
-# rename EDT to Post
-clin$treatment_timepoint[clin$treatment_timepoint == "EDT"] <- "POST"
 
 # Remove any semicolons or unwanted characters in the columns
 clin <- data.frame(lapply(clin, function(x) gsub(";", "", x)))
 
 # Save the processed data as CLIN.csv file
 write.table(clin, file="files/CLIN.csv", sep=";", quote=FALSE, col.names=TRUE, row.names=FALSE)
-
 
 ## 2. Get EXPR and case files
 # Read expression data
