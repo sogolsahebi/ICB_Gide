@@ -43,10 +43,10 @@ clin_IPIPD1$Patient.no. <- paste0("ipiPD1_", seq_len(nrow(clin_IPIPD1)))
 # Bind the two clin data
 clin <- rbind(clin_PD1, clin_IPIPD1)
 
-# Split by semicolon and extractPatient.no. and treatment_timepoint 
-mapping[, c("Patient.no.", "treatment_timepoint")] <- t(sapply(strsplit(mapping$submitted_ftp, "/"), function(x) {
-  c(sub("(_PRE|_EDT).*", "", tail(x, 1)), sub(".*_(PRE|EDT).*", "\\1", tail(x, 1)))
-}))
+# Split by semicolon and extrac tPatient.no. 
+mapping[, "Patient.no."] <- sapply(strsplit(mapping$submitted_ftp, "/"), function(x) {
+  sub("(_PRE|_EDT).*", "", tail(x, 1))
+})
 
 # Merge clinical data with mapping
 clin_merged <- merge(clin, mapping, by = "Patient.no.")
