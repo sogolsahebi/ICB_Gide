@@ -81,6 +81,9 @@ clin$drug_type[clin$treatmentid == "Ipilimumab + Pembrolizumab" | clin$treatment
 # Replace empty string values with NA
 clin[clin == "-"] <- NA
 
+# rename EDT to Post
+clin$treatment_timepoint[clin$treatment_timepoint == "EDT"] <- "POST"
+
 # Remove any semicolons or unwanted characters in the columns
 clin <- data.frame(lapply(clin, function(x) gsub(";", "", x)))
 
