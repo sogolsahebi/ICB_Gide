@@ -71,7 +71,7 @@ get_MultiAssayExp <- function(study, input_dir, expr_with_counts_isoforms=FALSE)
   coldata <- coldata[order(rownames(coldata)), ]
   
   #add
-  #ICB <- get_MultiAssayExp("Fehrenbacher", "files/",TRUE)
+  #ICB <- get_MultiAssayExp("Gide", "files/",TRUE)
   #saveRDS(ICB, file = "output/ICB_Gide.rds")
   
   return(MultiAssayExperiment(experiments=se_list, colData=coldata))
