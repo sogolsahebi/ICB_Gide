@@ -1,7 +1,7 @@
 # Format_downloaded_data.R
 
 # This script formats and cleans clinical and expression data.
-# - Creates "CLIN.txt" dimension 91 x 25
+# - Creates "CLIN.txt" dimension 91 x 26
 # - Creates 'expr_list.rds' including:
   # - expr_gene_tpm: dimension 61544 x 91
   # - expr_gene_counts: dimension 61544 x 91
