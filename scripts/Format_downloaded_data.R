@@ -53,6 +53,7 @@ clin_merged <- merge(clin, mapping, by = "Patient.no.")
 
 # Rename run_accession to patient
 colnames(clin_merged)[colnames(clin_merged) == "run_accession"] <- "patient"
+clin_merged$treatment_timepoint <- gsub("EDT", "POST", clin_merged$treatment_timepoint)
 
 # Save clinical data as CLIN.txt
 write.table(clin_merged, "files/CLIN.txt", quote = FALSE, sep = "\t", row.names = FALSE)
@@ -94,3 +95,4 @@ process_kallisto_output <- function(work_dir, tx2gene) {
 
 # output: expr_list.rds
 process_kallisto_output(work_dir, tx2gene)
+
