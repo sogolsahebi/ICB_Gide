@@ -1,0 +1,580 @@
+---
+title: "QC Analysis of ICB Wolf mae"
+author:
+- name: "Nasim Bondar Sahebi"
+  affiliation:
+  - UofT student, Princess Margaret Cancer Center,University Health Network, Toronto, Ontario, Canada
+date: "2024 01 23"
+output:
+  html_document: default
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+```
+
+## load libraries
+
+```{r libraries cars}
+library(MultiAssayExperiment) 
+library(ggplot2)
+#library(dplyr)
+#library(tibble)
+#library(patchwork)
+#library(networkD3)
+```
+
+## Data Loading and Preparation
+
+**Data Overview**:
+
+  - **Study Reference**: [PubMed ID 30753825](https://pubmed.ncbi.nlm.nih.gov/30753825/)
+  - **Patient Count **: 91
+  - **Treatment counts**:
+  - **IO+combo**: 41
+  - **PD-1/PD-L1**: 50 
+  
+
+Load multiassay .rds file, extract clinical, expression and annotations data; prepare gene expression data for analysis.
+
+```{r multiassay extraction}
+# Load your multiassay result and extract clinical data , expression data and annotation
+
+#load mae obj
+mae <- readRDS("~/bhklab/ICB/ICB_Gide/output/ICB_Gide.rds")
+
+#extract Clinical data 
+clin <- data.frame(colData(mae)) # Dim 91 x 51
+
+# assay names:  "expr_gene_tpm", "expr_gene_counts", "expr_isoform_tpm", "expr_isoform_counts"
+names(mae)
+
+#extract the expression data
+expr <- assays(mae)[["expr_gene_tpm"]] # Dim 61544 x 91
+
+#extracting the annotation 
+annot <- data.frame(rowData(mae@ExperimentList$expr_gene_tpm))
+
+# Display first few rows of the data set.
+DT::datatable(expr[1:8, 1:4])
+
+```
+
+## Patients Were Strictly Stratified by RECIST Response and Progression-free Survival
+
+
+- Generating Table about  Clinicopathologic Characteristics of Anti-PD-1 Monotherapy and Combined Anti-PD-1 with Anti-CTLA-4 Immunotherapy Cohorts:
+
+our clin is  `treatment` are  which are cwither mono  **PD-1/PD-L1** and combined **IO+combo** respectively 
+ anti-PD-1 mono  and  Combined Anti-PD-1 and Anti-CTLA-4 Immunotherapy.
+
+The paper presents a top pCR rate of 74%, followed by 64%, 62%, and 56%, in contrast to our findings of 80%, 71%, 67%, and 57% respectively.
+- raw dat ashared with us included 91 patienst version the paper had 120 patinets, we have treated with anti-PD-1 monotherapy (nivolumab or pembrolizumab; n = 50 patients) verses p[paper 63] and
+  combined anti-CTLA-4 and anti-PD-1 therapy (nivolumab or pembrolizumab combined with ipilimumab; n = 41 patients).  versis 57
+
+**Results**: Comparing our findings to those from paper Figure 1(c):
+
+- **e**: 
+  
+  Patients were treated with standard-of-care single-agent nivolumab or pembrolizumab or combination anti-PD-1 + anti-CTLA-4, and a subset were treated as part of clinical trials , 
+  unique(clin$treatment)
+[1] "IO+combo"   "PD-1/PD-L1" single agent is  "PD-1/PD-L1 and montherapyt anto PD1 and the othe ri scombine d > unique(clin$treatment)
+[1] "IO+combo"   "PD-1/PD-L1"
+> unique(clin$recist)
+[1] "PD" "PR" "SD" "CR"
+> unique(clin$survival_time_pfs)
+ [1]  0.5000000  2.7000000  2.7333333  3.6000000  4.1000000  5.0666667  6.5333333 10.0333333  1.1333333 12.8666667 13.6666667 16.8666667 16.9666667 17.2666667 18.1333333 18.2000000 19.9000000 20.3000000
+[19] 20.7666667 20.9000000 21.2333333 21.6666667 23.1666667 24.0333333 24.4000000 25.8333333 30.1333333  1.3666667  2.5333333  2.6000000  2.6666667  2.7666667  2.8000000  3.2000000  3.3333333  4.1666667
+[37]  0.4333333  5.5333333  6.3666667  9.0333333 10.4666667 11.1666667  0.7666667 19.5333333 19.6666667 25.1666667 28.1666667 29.0000000 29.7000000 35.8333333 36.1666667 36.6000000 39.1333333 39.6333333
+[55] 44.2666667  1.3000000 44.7333333 51.7666667 52.9666667 53.4333333  1.4000000  1.5666667  1.9333333  2.3666667 11.9333333
+
+
+. Responders were defined as patients with a RECIST response of complete response (CR), partial response (PR), or stable disease (SD) of greater than 6 months with no progression, and non-responders as progressive disease (PD) or SD for less than or equal to 6 months before disease progression. The median age of the total cohort was 62 years, 34% had an elevated baseline lactate dehydrogenase, and 34% had tumors that were BRAF-mutation positive (
+Table 1
+). The progression-free survival (PFS) and overall survival of the anti-PD-1 monotherapy and the combined anti-CTLA-4 and anti-PD-1 immunotherapy cohorts are illustrated in 
+Figures S1
+B and S1C, respectively.
+
+```{r checking treatment}
+
+# Load necessary libraries
+library(dplyr)
+library(knitr)
+
+# Step 1: Subset data into monotherapy and combination therapy
+monotherapy <- clin %>% filter(treatment == "PD-1/PD-L1")
+combo_therapy <- clin %>% filter(treatment== "IO+combo")
+
+# Step 2: Define the function to generate summary statistics
+generate_detailed_summary <- function(data) {
+  data %>%
+    group_by(response_paper) %>%
+    summarize(
+      `Age (years), median` = median(age, na.rm = TRUE),
+      Male = sum(sex == "M", na.rm = TRUE),
+      Female = sum(sex == "F", na.rm = TRUE),
+      `Nivolumab n (%)` = sum(treatmentid == "Nivolumab", na.rm = TRUE),
+      `Pembrolizumab n (%)` = sum(treatmentid == "Pembrolizumab", na.rm = TRUE),
+      M0 = sum(stage == "M0", na.rm = TRUE),
+      M1a = sum(stage == "M1a", na.rm = TRUE),
+      M1b = sum(stage == "M1b", na.rm = TRUE),
+      M1c = sum(stage == "M1c", na.rm = TRUE),
+      M1d = sum(stage == "M1d", na.rm = TRUE),
+      CR = sum(recist == "CR", na.rm = TRUE),
+      PR = sum(recist == "PR", na.rm = TRUE),
+      SD = sum(recist == "SD", na.rm = TRUE),
+      PD = sum(recist == "PD", na.rm = TRUE),
+      `Median PFS (months)` = median(survival_time_pfs, na.rm = TRUE),
+      `12-month PFS (%)` = mean(survival_time_pfs >= 12, na.rm = TRUE) * 100,
+      `Median OS (months)` = median(survival_time_os, na.rm = TRUE),
+      `12-month OS (%)` = mean(survival_time_os >= 12, na.rm = TRUE) * 100
+    )
+}
+
+# Step 3: Generate summaries for both monotherapy and combination therapy
+monotherapy_summary <- generate_detailed_summary(monotherapy)
+combo_therapy_summary <- generate_detailed_summary(combo_therapy)
+
+# Step 4: Combine the summaries into a single table
+combined_summary <- bind_rows(
+  monotherapy_summary %>% mutate(Therapy = "Anti-PD-1 Monotherapy"),
+  combo_therapy_summary %>% mutate(Therapy = "Anti-PD-1 + Anti-CTLA-4 Therapy")
+)
+
+# Step 5: Reshape the table to match the structure in the image
+final_summary <- combined_summary %>%
+  pivot_longer(cols = -c(response_paper, Therapy), names_to = "Characteristic", values_to = "Value") %>%
+  arrange(Therapy, response_paper)
+
+# Step 6: Print the table in a similar format as shown in the image
+kable(final_summary, caption = "Summary of Patient Characteristics and Outcomes by Therapy Type")
+
+```
+
+
+## Paper Fig4: Clinically motivated response-based biomarker-subsets.
+
+**Overall prevalence and pCR rates in Pembro by immune subtype in TN:**
+
+**Results**: Comparing our findings to those from paper Figure 4(a):
+
+- We observe that the bar plot results contain the exact same information as Figure 1(d) in the paper. However, there is a slight difference: in the paper, the p-value is mentioned as 0.0013, whereas here it is computed as 0.0014.
+
+```{r Fig4partd, fig.width= 8 , fig.height= 6 }
+
+this is the paper and thi sthe heat map there, i trie dto regenarte this # 1. Load the raw gene counts
+expr_gene_counts <- assays(mae)[["expr_gene_counts"]]
+annot <- data.frame(rowData(mae@ExperimentList$expr_gene_counts))
+
+# 2. Keep only protein-coding genes
+protein_coding_genes <- annot[annot$gene_type == "protein_coding", ]
+expr_gene_counts_protein_coding <- expr_gene_counts[rownames(expr_gene_counts) %in% protein_coding_genes$gene_id, ]
+
+# 3. Subset clinical data to include pre-treatment (PRE) anti-PD-1 monotherapy samples
+clin_subset <- clin[clin$RNA.Sequencing == "PRE" & clin$treatment == "PD-1/PD-L1", ]
+
+# Ensure patient IDs are consistent between clin_subset and expression data
+patients <- intersect(clin_subset$patientid, colnames(expr_gene_counts_protein_coding))
+
+# Subset expression data and clinical data for matching patients
+expr_gene_counts_protein_coding <- expr_gene_counts_protein_coding[, patients]
+clin_subset <- clin_subset[clin_subset$patientid %in% patients, ]
+
+# Revert the log2 transformation (assuming log2(expr_gene_counts + 1) was used)
+expr_gene_counts_raw <- 2^expr_gene_counts_protein_coding - 1
+
+# Round the values to the nearest integer as required by DESeq2
+expr_gene_counts_raw <- round(expr_gene_counts_raw)
+
+# Create the response column based on the paper's RECIST classification
+clin_subset$reponse_paper <- case_when(
+  clin_subset$recist == "CR" ~ "Responder",  
+  clin_subset$recist %in% c("PR", "SD") ~ "Responder", 
+  clin_subset$recist == "PD" ~ "Non-responder", 
+  TRUE ~ NA_character_  # Any other cases will be marked as NA (optional)
+)
+
+# Remove rows with NA in the 'response_reponse_paper' and 'response' columns
+clin_subset_paper <- clin_subset[!is.na(clin_subset$reponse_paper), ] # dim 32 x 52
+clin_subset_predictio <- clin_subset[!is.na(clin_subset$response), ] # dim 30 x 52
+
+# Subset expression data based on patient IDs
+expr_paper <- expr_gene_counts_raw[, colnames(expr_gene_counts_raw) %in% clin_subset_paper$patientid]
+expr_predictio <- expr_gene_counts_raw[, colnames(expr_gene_counts_raw) %in% clin_subset_predictio$patientid]
+
+# Re-create the DESeq2 datasets
+dds_paper <- DESeqDataSetFromMatrix(countData = expr_paper, 
+                                    colData = clin_subset_paper, 
+                                    design = ~ reponse_paper)
+
+dds_predictio <- DESeqDataSetFromMatrix(countData = expr_predictio, 
+                                        colData = clin_subset_predictio, 
+                                        design = ~ response)
+
+# Run DESeq2 analysis
+dds_paper <- DESeq(dds_paper)
+res_paper <- results(dds_paper, alpha = 0.05)
+
+dds_predictio <- DESeq(dds_predictio)
+res_predictio <- results(dds_predictio, alpha = 0.05)
+
+# Extract (DEGs)
+degs_paper <- subset(res_paper, padj < 0.05)
+deg_list_paper <- rownames(degs_paper)
+
+degs_predictio <- subset(res_predictio, padj < 0.05)
+deg_list_predictio <- rownames(degs_predictio)
+
+# Perform hierarchical clustering on  DEGs for the paper's response based on RECIST criteria
+expr_deg_subset_paper <- expr_paper[deg_list_paper, ]
+pheatmap(expr_deg_subset_paper, cluster_rows = TRUE, cluster_cols = TRUE, 
+         main = "Heatmap of DEGs - Pre-Treatment (PRE) based on RECIST Response Criteria")
+
+# Perform hierarchical clustering  DEGs for the PredictIO response
+expr_deg_subset_predictIO <- expr_predictio[deg_list_predictio, ]
+pheatmap(expr_deg_subset_predictIO, cluster_rows = TRUE, cluster_cols = TRUE, 
+         main = "Heatmap of DEGs - Pre-Treatment (PRE) based on PredictIO Response")
+
+```
+
+**Part(b)**: 
+
+**Checking  Overall prevalence
+and pCR rates in VC by DRD subtype in TN. p-values shown are from Fisher’s exact test**
+
+**Results**: Comparing our findings to those from paper Figure 4(a):
+
+- We observe that the bar plot results contain the exact same information as Figure 1(d) in the paper.
+
+
+```{r figure 4b, fig.width= 8 , fig.height= 6 }
+
+# Part (a)
+# 1. Pie chart for TN samples based on DRD status
+
+# subset TN samples 
+clin_TN <- clin[clin$Receptor.Subtype == "TN",]
+
+# Define data.frame for DRD Status and Counts
+clin_DRD <- as.data.frame(table(clin_TN$DRD.))
+names(clin_DRD) <- c("DRD_Status", "Counts")
+
+# Rename the 0 and 1 to "DRD-" and "DRD+"
+clin_DRD$DRD_Status <- factor(clin_DRD$DRD_Status, levels = c("0", "1"), labels = c("DRD-", "DRD+"))
+
+# Define a pie chart for DRD status
+pie_chart_DRD <- ggplot(clin_DRD, aes(x = "", y = Counts, fill = DRD_Status)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar("y", start = 0) +
+  theme_void() +
+  scale_fill_manual(values = c("#FC8D59", "#D7301F")) + 
+  geom_text(aes(label = paste0(round(Counts / sum(Counts) * 100), "%", "\n(n=", Counts, ")")), 
+            position = position_stack(vjust = 0.5)) + 
+  labs(title = "TN/DRD", fill = "DRD Status") + 
+  theme(plot.title = element_text(hjust = 0.5)) 
+
+# Part (b)
+# 2. Barplot for TN samples based on DRD status for VC arm
+
+# Filter clin_TN to include only the VC arm
+clin_TN_VC <- clin_TN[clin_TN$Arm..short.name. == "VC",]
+
+# Calculate mean pCR values for each DRD Status in the VC arm
+response_data_VC <- aggregate(pCR ~ DRD., data = clin_TN_VC, FUN = mean, na.rm = TRUE)
+names(response_data_VC) <- c("DRD_Status", "Mean_Response")
+response_data_VC$Counts <- aggregate(pCR ~ DRD., data = clin_TN_VC, FUN = length)$pCR
+
+# Add a new column to the data frame with the percentages
+response_data_VC$Percentage <- (response_data_VC$Counts / sum(response_data_VC$Counts)) * 100
+
+# Convert DRD_Status to a factor with more readable levels
+response_data_VC$DRD_Status <- factor(response_data_VC$DRD_Status, levels = c("0", "1"), labels = c("DRD-", "DRD+"))
+
+# Set labels for format DRD status and counts
+response_data_VC$Labels <- paste(response_data_VC$DRD., " (n =", response_data_VC$Counts, ")")
+
+# Define bar chart for DRD status in the VC arm
+bar_chart_DRD_VC <- ggplot(response_data_VC, aes(x = Labels, y = Mean_Response, fill = DRD_Status)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste(round(Percentage), "%")), vjust = 1.8, color = "black") +
+  labs(x = "DRD Status", y = "Mean Response", fill = "DRD Status") +
+  scale_fill_manual(values = c("#FC8D59", "#D7301F")) +
+  theme_minimal() +
+  ggtitle("VC arm") +
+  theme(plot.title = element_text(hjust = 0.5)) 
+
+# Perform Fisher's exact test
+fisher_result_DRD_VC <- fisher.test(table(clin_TN_VC$pCR, clin_TN_VC$DRD.))
+p_value_DRD_VC <- round(fisher_result_DRD_VC$p.value, 5)
+
+# Annotate the p-value on the DRD bar chart for the VC arm
+bar_chart_DRD_VC <- bar_chart_DRD_VC + 
+  annotate("text", x = 1.5, y = max(response_data_VC$Mean_Response, na.rm = TRUE), 
+           label = paste0("p=", sprintf("%.5f", p_value_DRD_VC)), size = 3.5, hjust = 1 )
+
+
+# Combine the DRD pie chart and VC arm DRD bar chart
+print(pie_chart_DRD + bar_chart_DRD_VC)
+
+# Combine the piercharts and bar plots 
+print(pie_chart + bar_chart + pie_chart_DRD + bar_chart_DRD_VC )
+
+```
+**Part(c)**: 
+
+**Sankey plot showing Immune/DRD subsets in TN, with barplots of pCR rates in VC, Pembro and control.** 
+
+**Results**: Comparing our findings to those from paper Figure 4(c):
+
+- We observe that the bar plot results contain the exact same information as Figure 4(c) in the paper.
+
+```{r Figure4 partd }
+
+# Use clin_TN subset
+
+# Define count of "HR-HER2+", "HR+HER2", "HER2+/BP-HER2_or_Basal" , ""HER2+/BP-Luminal" an dTotal number of rows for defining the percentages.
+TN_count <- nrow(clin_TN)
+Immune_neg_DRD_neg_count <- sum(clin_TN$RPS.5 == "HER2-/Immune-/DRD.v3-", na.rm = TRUE)
+Immune_neg_DRD_pos_count <- sum(clin_TN$RPS.5 == "HER2-/Immune-/DRD.v3+", na.rm = TRUE)
+Immune_pos_DRD_neg_count <- sum(clin_TN$RPS.5 == "HER2-/Immune+" & clin_TN$DRD. == "0", na.rm = TRUE)
+Immune_pos_DRD_pos_count <- sum(clin_TN$RPS.5 == "HER2-/Immune+"& clin_TN$DRD. == "1", na.rm = TRUE)
+
+
+# Example format: "HR-HER2+; 30% (n=100)"
+nodes <- data.frame(name = c(
+  paste("TN;","(n=",  nrow(clin_TN), ")", sep=""),
+  paste("TN/Immune-/DRD+;", ceiling(Immune_neg_DRD_neg_count  / TN_count * 100), "% (n=", Immune_neg_DRD_neg_count, ")", sep=""), 
+  paste("TN/Immune-/DRD-;", ceiling(Immune_neg_DRD_pos_count / TN_count * 100), "% (n=", Immune_neg_DRD_pos_count, ")", sep=""),
+  paste("TN/Immune+/DRD-;", ceiling(Immune_pos_DRD_neg_count / TN_count * 100), "% (n=", Immune_pos_DRD_neg_count, ")", sep=""),
+   paste("TN/Immune+/DRD+;", ceiling(Immune_pos_DRD_pos_count / TN_count * 100), "% (n=", Immune_pos_DRD_pos_count, ")", sep="")
+))
+
+# Sample data for links
+links <- data.frame(source = c(0, 0, 0, 0), 
+                    target = c(1, 2, 3, 4), 
+                    value = c(26, 11, 7, 56)) 
+
+# Create the Sankey diagram
+sankey <- sankeyNetwork(Links = links, Nodes = nodes, Source = 'source', 
+                        Target = 'target', Value = 'value', NodeID = 'name',
+                        units = '%', fontSize = 12, nodeWidth = 18 )
+
+# Print the Sankey diagram
+sankey
+
+# Bar plots 
+
+# 4 Bar plot for each group respecively; "Immune_neg_DRD_neg", "Immune_neg_DRD_pos" ,"Immune_pos_DRD_neg_count" and Immune_pos_DRD_pos_count. 
+
+# Function to create the bar plot
+create_bar_plot <- function(data_subset, title) {
+  # Calculate the mean pCR rate and counts
+  pCR_rates <- aggregate(pCR ~ Arm..short.name., data = data_subset, FUN = mean)
+  pCR_rates$Counts <- table(data_subset$Arm..short.name.)[pCR_rates$Arm..short.name.]
+
+  # Filter for specified treatment arms
+  pCR_rates <- pCR_rates[pCR_rates$Arm..short.name. %in% c("Ctr", "VC", "Pembro"),]
+
+  # Create the bar plot
+  bar_plot <- ggplot(pCR_rates, aes(x = Arm..short.name., y = pCR, fill = Arm..short.name.)) +
+    geom_bar(stat = "identity") +
+    geom_text(aes(label = ifelse(round(pCR * 100) > 0, 
+                                 paste0(round(pCR * 100), "% (n = ", Counts, ")"), 
+                                 "")), 
+              position = position_dodge(width = 0.9), vjust = 1.8, color = "black", size = 4) +  
+    scale_fill_manual(values = c("#6BAED6", "#FDCC8A", "#FC8D59")) +  
+    labs(x = "Treatment Arm", y = "Estimated pCR Rate (%)", fill = "Treatment Arm") +  
+    theme_minimal() +  
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    ggtitle(title) +
+    theme(plot.title = element_text(hjust = 0.5))
+
+  return(bar_plot)
+}
+
+# Apply the function for the two subsets
+bar_plot1 <- create_bar_plot(clin_TN[clin_TN$RPS.5 == "HER2-/Immune-/DRD.v3-",], "TN/Immune-/DRD-")
+bar_plot2 <- create_bar_plot(clin_TN[clin_TN$RPS.5 == "HER2-/Immune-/DRD.v3+",], "TN/Immune-/DRD+")
+bar_plot3 <- create_bar_plot(clin_TN[clin_TN$RPS.5 == "HER2-/Immune+" & clin_TN$DRD. == "0",],"TN/HER2-/Immune+/DRD-")
+bar_plot4 <- create_bar_plot(clin_TN[clin_TN$RPS.5 == "HER2-/Immune+" & clin_TN$DRD. == "1",],"TN/HER2-/Immune+/DRD+")
+
+
+# Print the bar plots
+print(bar_plot1)
+print(bar_plot2)
+print(bar_plot3)
+print(bar_plot4)
+```
+
+```{r combine bar plots, fig.width= 12 , fig.height= 7}
+
+# Combine the Bra plots ()
+print(bar_plot1+ bar_plot2 + bar_plot3+ bar_plot4)
+
+```
+
+**Part(d)**: 
+
+**Sankey plot showing Immune/DRD subsets in HR+HER2-**
+
+**Results**: Comparing our findings to those from paper Figure 4(d):
+
+- We observe that the bar plot results contain the exact same information as Figure 4(d) in the paper.
+
+```{r Fig4 partd }
+
+# Use HR+HER2- subset
+
+# Define counts.
+clin_HR_pos_HER_neg  <- clin[clin$Receptor.Subtype == "HR+HER2-",]
+Immune_neg_DRD_neg_count2 <- sum(clin_HR_pos_HER_neg$RPS.5 == "HER2-/Immune-/DRD.v3-", na.rm = TRUE)
+Immune_neg_DRD_pos_count2 <- sum(clin_HR_pos_HER_neg$RPS.5 == "HER2-/Immune-/DRD.v3+", na.rm = TRUE)
+Immune_pos_DRD_neg_count2 <- sum(clin_HR_pos_HER_neg$RPS.5 == "HER2-/Immune+" & clin_HR_pos_HER_neg$DRD. == "0", na.rm = TRUE)
+Immune_pos_DRD_pos_count2 <- sum(clin_HR_pos_HER_neg$RPS.5 == "HER2-/Immune+"& clin_HR_pos_HER_neg$DRD. == "1", na.rm = TRUE)
+
+# Example format: "HR-HER2+; 30% (n=100)"
+nodes <- data.frame(name = c(
+  paste("HR+HER2- ;","(n=",  nrow(clin_HR_pos_HER_neg), ")", sep=""),
+  paste("HR+HER2-/Immune-/DRD+;", ceiling(Immune_neg_DRD_neg_count2  / nrow(clin_HR_pos_HER_neg) * 100), "% (n=", Immune_neg_DRD_neg_count, ")", sep=""), 
+  paste("HR+HER2-/Immune-/DRD-;", ceiling(Immune_neg_DRD_pos_count2 / nrow(clin_HR_pos_HER_neg) * 100), "% (n=", Immune_neg_DRD_pos_count, ")", sep=""),
+  paste("HR+HER2-/Immune+/DRD-;", ceiling(Immune_pos_DRD_neg_count2 / nrow(clin_HR_pos_HER_neg) * 100), "% (n=", Immune_pos_DRD_neg_count, ")", sep=""),
+   paste("HR+HER2-/Immune+/DRD+;", ceiling(Immune_pos_DRD_pos_count / nrow(clin_HR_pos_HER_neg) * 100), "% (n=", Immune_pos_DRD_pos_count, ")", sep="")
+))
+
+# Sample data for links
+links <- data.frame(source = c(0, 0, 0, 0), 
+                    target = c(1, 2, 3, 4), 
+                    value = c(51, 10, 20, 19)) 
+
+# Create the Sankey diagram
+sankey <- sankeyNetwork(Links = links, Nodes = nodes, Source = 'source', 
+                        Target = 'target', Value = 'value', NodeID = 'name',
+                        units = '%', fontSize = 12, nodeWidth = 18 )
+
+# Print the Sankey diagram
+sankey
+
+```
+
+**Part(e)**: 
+
+**Sankey plot of HER2+/BP_Luminal and HER2+/BP_Her2_or_Basal in HER2+, with barplots of pCR rates in Ctr, TDM1/P and MK2206 arms.**
+
+**Results**: Comparing our findings to those from paper Figure 4(e):
+
+- We observe that the bar plot results contain the exact same information as Figure 4(e) in the paper.
+
+
+```{r Figure4 parte}
+
+# Subset clin for "HER2+" 
+clin_HER2_pos <- clin[clin$Receptor.Subtype == "HR-HER2+"| clin$Receptor.Subtype == "HR+HER2+",]
+
+
+# Define count of "HR-HER2+", "HR+HER2", "HER2+/BP-HER2_or_Basal" , ""HER2+/BP-Luminal" an dTotal number of rows for defining the percentages.
+hr_neg_count <- sum(clin_HER2_pos$Receptor.Subtype == "HR-HER2+")
+hr_pos_count <- sum(clin_HER2_pos$Receptor.Subtype == "HR+HER2+")
+BP_HER2_or_Basal_count <- sum(clin_HER2_pos$BP.HER2.2..4 == "HER2+/BP_Her2orBasal", na.rm = TRUE)
+BP_Luminal_count <- sum(clin_HER2_pos$BP.HER2.2..4 == "HER2+/BP_Luminal", na.rm = TRUE)
+total_count <- nrow(clin_HER2_pos)
+
+
+# Example format: "HR-HER2+; 30% (n=100)"
+nodes <- data.frame(name = c(
+  paste("HR-HER2+;", round(hr_neg_count / total_count * 100), "% (n=", hr_neg_count , ")", sep=""),
+  paste("HR+HER2+;", round(hr_pos_count / total_count * 100), "% (n=", hr_pos_count, ")", sep=""), 
+  paste("HER2+/BP-HER2_or_Basal;", round(BP_HER2_or_Basal_count / total_count * 100), "% (n=", BP_HER2_or_Basal_count, ")", sep=""),
+  paste("HER2+/BP-Luminal;", round(BP_Luminal_count / total_count * 100), "% (n=", BP_Luminal_count, ")", sep="")
+))
+
+# Sample data for links
+links <- data.frame(source = c(0, 0, 1, 1), 
+                    target = c(2, 3, 2, 3), 
+                    value = c(36, 1, 76, 24)) 
+
+# Create the Sankey diagram
+sankey <- sankeyNetwork(Links = links, Nodes = nodes, Source = 'source', 
+                        Target = 'target', Value = 'value', NodeID = 'name',
+                        units = '%', fontSize = 12, nodeWidth = 18)
+
+# Print the Sankey diagram
+sankey
+
+```
+
+```{r Fig4e barplot1, fig.width= 11 , fig.height= 6 }
+
+# 1. bar_plot1 "HER2_pos_BP_Her2orBasal" group
+
+# Filter clin_HER2_pos to include only the desired condition
+clin_HER2_pos_BP_Her2orBasal <- clin_HER2_pos[clin_HER2_pos$BP.HER2.2..4 == "HER2+/BP_Her2orBasal",]
+
+# Calculate the mean pCR rate for each treatment arm and receptor subtype
+pCR_rate <- aggregate(pCR ~ Arm..short.name., data = clin_HER2_pos_BP_Her2orBasal, FUN = mean)
+
+# Calculate the number of occurrences for each arm and add it to pCR_rate
+pCR_rate$Counts <- table(clin_HER2_pos_BP_Her2orBasal$Arm..short.name.)[pCR_rate$Arm..short.name.]
+
+
+# Keeping only 3 arms "Ctr", "MK2206", "Pertuzumab"
+selected_arms <- c("Ctr", "MK2206", "Pertuzumab")
+pCR_rate <- pCR_rate[pCR_rate$Arm..short.name. %in% selected_arms,]
+
+
+# Define a ggplot object with a bar plot
+bar_plot1 <- ggplot(pCR_rate, aes(x = Arm..short.name., y = pCR, fill = Arm..short.name.)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(round(pCR * 100),  "% (n = ", Counts, ")")),  
+            position = position_dodge(width = 0.9), 
+            vjust = 1.8,  
+            color = "black", 
+            size = 4) +  
+  scale_fill_manual(values = c("#6BAED6", "#FDCC8A", "#FC8D59")) +  
+  labs(x = "Treatment Arm", y = "Estimated pCR Rate (%)", fill = "Treatment Arm") +  
+  theme_minimal() +  
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ggtitle("HER2+/ BP_Her2orBasal Subset") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+# Print the bar plot
+print(bar_plot1)
+
+# 2. 1. bar_plot1 "HER2/BP Luminal" group
+
+# Filter clin_HER2_pos to include only the desired condition
+clin_HER2_pos_BP_Luminall <- clin_HER2_pos[clin_HER2_pos$BP.HER2.2..4 == "HER2+/BP_Luminal",]
+
+# Calculate the mean pCR rate for each treatment arm and receptor subtype
+pCR_rate2 <- aggregate(pCR ~ Arm..short.name., data = clin_HER2_pos_BP_Luminall, FUN = mean)
+
+# Filter pCR_rate2 for specific arms 
+pCR_rate2 <- pCR_rate2[pCR_rate2$Arm..short.name. %in% selected_arms,]
+
+# Calculate the number of occurrences for each arm and add it to pCR_rate
+pCR_rate2$Counts2 <- table(clin_HER2_pos_BP_Luminall$Arm..short.name.)[pCR_rate$Arm..short.name.]
+
+# Define a ggplot object with a bar plot
+bar_plot2 <- ggplot(pCR_rate2, aes(x = Arm..short.name., y = pCR, fill = Arm..short.name.)) + 
+  geom_bar(stat = "identity") + 
+  geom_text(aes(label = paste0(round(pCR * 100), "% (n = ", Counts2, ")")),  
+            position = position_dodge(width = 0.9), 
+            vjust = 1.8,  
+            color = "black", 
+            size = 4) +  
+  scale_fill_manual(values = c("#6BAED6", "#FDCC8A", "#FC8D59")) +  # Adjust colors if necessary
+  labs(x = "Treatment Arm", y = "Estimated pCR Rate (%)", fill = "Treatment Arm") +  
+  theme_minimal() +  
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ggtitle("HER2/BP Luminal") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Print the bar plot
+print(bar_plot2)
+
+# Combine Figure 4e graphs
+print(bar_plot1 + bar_plot2)
+
+```
