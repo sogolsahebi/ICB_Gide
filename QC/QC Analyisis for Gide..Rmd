@@ -1,0 +1,369 @@
+---
+title: "QC Analysis of ICB Wolf mae"
+author:
+- name: "Nasim Bondar Sahebi"
+  affiliation:
+  - UofT, Princess Margaret Cancer Center,University Health Network, Toronto, Ontario, Canada
+date: "2024 15 09"
+output:
+  html_document: default
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+```
+
+## load libraries
+
+```{r libraries cars}
+library(MultiAssayExperiment) 
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(knitr)
+library(DESeq2)
+library(pheatmap)
+library(gridExtra)
+library(edgeR)
+
+```
+
+## Data Loading and Preparation
+
+**Data Overview**:
+
+  - **Study Reference**: [PubMed ID 30753825](https://pubmed.ncbi.nlm.nih.gov/30753825/)
+  - **Patient Count **: 91
+  - **Treatment counts**:
+  - **IO+combo**: 41
+  - **PD-1/PD-L1**: 50 
+  
+
+Load multiassay .rds file, extract clinical, expression and annotations data; prepare gene expression data for analysis.
+
+```{r multiassay extraction}
+# Load your multiassay result and extract clinical data , expression data and annotation
+
+#load mae obj
+mae <- readRDS("~/BHK lab/ICB/ICB_Gide/output/ICB_Gide.rds")
+
+#extract Clinical data 
+clin <- data.frame(colData(mae)) # Dim 91 x 51
+
+# assay names:  "expr_gene_tpm", "expr_gene_counts", "expr_isoform_tpm", "expr_isoform_counts"
+names(mae)
+
+#extract the expression data
+expr <- assays(mae)[["expr_gene_tpm"]] # Dim 61544 x 91 and range is : -9.965784 to 16.769311
+
+#extracting the annotation 
+annot <- data.frame(rowData(mae@ExperimentList$expr_gene_tpm))
+
+# Display first few rows of the data set.
+DT::datatable(expr[1:8, 1:4])
+
+```
+
+## Quality Control Comparison: Clinicopathologic Characteristics of Anti-PD-1 Monotherapy and Combined Anti-PD-1 with Anti-CTLA-4 Immunotherapy Cohorts
+
+**Objective**: Compare our dataset (91 patients) to the published study (120 patients) for key clinical characteristics and outcomes in Anti-PD-1 Monotherapy and Combined Anti-PD-1 with Anti-CTLA-4 Immunotherapy cohorts.
+
+- **Published Study**: 63 monotherapy, 57 combination therapy patients.
+- **Our Data**: 50 monotherapy, 41 combination therapy patients. Slightly fewer patients overall in our data (91 vs. 120).
+
+**Age (years), median**:
+- **Published Study**: Monotherapy Non-responders: 64, Responders: 69; Combo Therapy Non-responders: 55, Responders: 57.
+- **Our Data**: Monotherapy Non-responders: 67, Responders: 62; Combo Therapy Non-responders: 51, Responders: 65.  
+  - **Difference**: Ages in our data are similar to the published study, with slightly lower median age in combination therapy non-responders.
+
+**Gender Breakdown (Male %)**:
+- **Published Study**: Monotherapy Non-responders: 67%, Responders: 55%; Combo Therapy Non-responders: 62%, Responders: 66%.
+- **Our Data**: Monotherapy Non-responders: 73.9%, Responders: 59.3%; Combo Therapy Non-responders: 63.6%, Responders: 66.7%.  
+  - **Difference**: Gender distribution is highly consistent, with very minor differences.
+
+**Treatment Response (CR/PR)**:
+- **Published Study**: Monotherapy CR/PR: 45%, PD: 55%; Combo Therapy CR/PR: 53%, PD: 81% in non-responders.
+- **Our Data**: Monotherapy CR/PR: 46%, PD: 20 non-responders; Combo Therapy CR/PR: 53%, PD: 9 non-responders.  
+  - **Difference**: Treatment response matches well between datasets.
+
+**Progression-Free Survival (PFS, months)**:
+- **Published Study**: Monotherapy: 2.6 months for non-responders, Combo Therapy: 2.7 months for non-responders.
+- **Our Data**: Monotherapy: 2.6 months for non-responders, 29 months for responders; Combo Therapy: 2.7 months for non-responders, 20.1 months for responders.  
+  - **Difference**: Close alignment, with minor differences in responder data.
+
+**Overall Survival (OS, months)**:
+- **Published Study**: Monotherapy 12-month OS: 89% for responders, 23.8% for non-responders; Combo Therapy: 67.7% for non-responders.
+- **Our Data**: Monotherapy 12-month OS: 96.3% for responders, 21.7% for non-responders; Combo Therapy: 86.7% for responders, 54.5% for non-responders.  
+  - **Difference**: OS rates are slightly higher in our dataset, particularly in responders, likely due to smaller sample size.
+
+The comparison confirms that our dataset aligns well with the published study in terms of clinical characteristics, response rates, and survival outcomes. Minor variations are expected due to cohort size differences, but overall trends are consistent.
+
+```{r Table1}
+
+
+# Define responder and non-responder groups based on the criteria
+clin$response_paper <- ifelse(
+  (clin$recist %in% c("CR", "PR") | (clin$recist == "SD" & clin$survival_time_pfs > 6)), 
+  "Responder", 
+  ifelse(clin$recist == "PD" | (clin$recist == "SD" & clin$survival_time_pfs <= 6), 
+         "Non-responder", 
+         NA)
+)
+
+# Subset data to mono and combo
+monotherapy <- clin %>% filter(treatment == "PD-1/PD-L1")
+combo_therapy <- clin %>% filter(treatment == "IO+combo")
+
+# Generate summary statistics
+generate_detailed_summary <- function(data) {
+  data %>%
+    group_by(response_paper) %>%
+    summarize(
+      `Age (years), median` = as.character(round(median(age, na.rm = TRUE), 1)),
+      Male = paste0(sum(sex == "M", na.rm = TRUE), " (", round(sum(sex == "M", na.rm = TRUE) / n() * 100, 1), "%)"),
+      Female = paste0(sum(sex == "F", na.rm = TRUE), " (", round(sum(sex == "F", na.rm = TRUE) / n() * 100, 1), "%)"),
+      `Nivolumab n (%)` = paste0(sum(treatmentid == "Nivolumab", na.rm = TRUE), " (", round(sum(treatmentid == "Nivolumab", na.rm = TRUE) / n() * 100, 1), "%)"),
+      `Pembrolizumab n (%)` = paste0(sum(treatmentid == "Pembrolizumab", na.rm = TRUE), " (", round(sum(treatmentid == "Pembrolizumab", na.rm = TRUE) / n() * 100, 1), "%)"),
+      CR = as.character(sum(recist == "CR", na.rm = TRUE)),
+      PR = as.character(sum(recist == "PR", na.rm = TRUE)),
+      SD = as.character(sum(recist == "SD", na.rm = TRUE)),
+      PD = as.character(sum(recist == "PD", na.rm = TRUE)),
+      `Median PFS (months)` = as.character(round(median(survival_time_pfs, na.rm = TRUE), 1)),
+      `12-month PFS (%)` = as.character(round(mean(survival_time_pfs >= 12, na.rm = TRUE) * 100, 1)),
+      `Median OS (months)` = as.character(round(median(survival_time_os, na.rm = TRUE), 1)),
+      `12-month OS (%)` = as.character(round(mean(survival_time_os >= 12, na.rm = TRUE) * 100, 1))
+    )
+}
+
+# Generate summaries
+monotherapy_summary <- generate_detailed_summary(monotherapy) %>% mutate(Therapy = "Monotherapy")
+combo_therapy_summary <- generate_detailed_summary(combo_therapy) %>% mutate(Therapy = "Combination Therapy")
+
+# Combine and reshape
+combined_summary <- bind_rows(monotherapy_summary, combo_therapy_summary) %>%
+  pivot_longer(cols = -c(Therapy, response_paper), names_to = "Characteristic", values_to = "Value") %>%
+  pivot_wider(names_from = c(Therapy, response_paper), values_from = Value)
+
+# Add number of patients to column headers
+colnames(combined_summary) <- c("Characteristic",
+                                "Monotherapy  Non-responder (n=23)",
+                                "Monotherapy Responder (n=27)",
+                                "Combination Therapy Non-responder (n=11)",
+                                "Combination Therapy Responder (n=30)")
+
+# Define row names
+rownames_final <- c("Age (years), median", "Male", "Female", 
+                    "Nivolumab n (%)", "Pembrolizumab n (%)", "CR", "PR", 
+                    "SD", "PD", "Median PFS (months)", "12-month PFS (%)", 
+                    "Median OS (months)", "12-month OS (%)")
+
+rownames(combined_summary) <- rownames_final
+
+# Print table with kable
+kable(combined_summary, caption = "Table 1. Clinicopathologic Characteristics of Anti-PD-1 Monotherapy and Combined Anti-PD-1 with Anti-CTLA-4 Immunotherapy
+Cohorts", align = "l")
+
+
+```
+
+## Immunotranscriptomic Gene Signatures in Responders and Non-responders to Anti-PD-1 Monotherapy and Combined Anti-PD-1
+
+The paper mentions 47 PRE samples (n = 35 responders, n = 12 non-responders) and 15 EDT samples (n = 11 responders, n = 4 non-responders). In our dataset, we have 41 PRE and 9 POST samples.
+
+### Steps Used for Analysis (Monotherapy 
+
+1. **HTSeq version 0.6.1** was used in the paper for differential gene expression analysis.  
+   - In our workflow, we used **DESeq2** for differential expression analysis, following read count normalization.
+
+2. **Normalization of Read Counts** was done using the `DESeq()` function in both the paper and our workflow.  
+   - This step is identical in both approaches, ensuring consistency in the data processing pipeline.
+
+3. **Displaying Normalized Expression as CPM**: The paper used **counts per million (CPM)** for visualizing normalized values.  
+   - Similarly, our analysis converted counts to CPM using the `cpm()` function for visualization.
+
+4. **Significant Differential Expression**: Both the paper and our analysis applied the Benjamini-Hochberg (BH) correction for multiple testing, selecting DEGs with an adjusted p-value of < 0.05.  
+   - We identified 320 DEGs in our PRE-treatment samples, consistent with the paper's threshold for significant genes.
+   
+We identified 320 DEGs in our PRE-treatment samples, compared to the 310 found in the paper, with overlapping genes (**TBX21, LAMB4, CD274, GRIA2, ITIH5, IDO1**) related to immune responses and resistance in anti-PD-1.
+
+
+```{r Fig1A ,  fig.width= 20 , fig.height= 50}
+
+
+# Access gene expression counts and annotation data
+expr_gene_counts <- assays(mae)[["expr_gene_counts"]]
+annot <- data.frame(rowData(mae@ExperimentList$expr_gene_counts))
+
+# Remove duplicate genes and set as rownames
+annot <- annot[!duplicated(annot$gene_name), ]
+annot <- annot[, c("gene_id", "gene_name")]
+
+# Match gene IDs and gene names, and remove rows without a gene name
+expr_gene_counts$gene_id <- rownames(expr_gene_counts)
+expr_gene_counts <- merge(expr_gene_counts, annot, by = "gene_id")
+expr_gene_counts <- expr_gene_counts[!is.na(expr_gene_counts$gene_name), ]
+rownames(expr_gene_counts) <- expr_gene_counts$gene_name
+expr_gene_counts$gene_id <- NULL
+expr_gene_counts$gene_name <- NULL
+
+# Revert log-transformed data (if necessary)
+expr_gene_counts <- 2^expr_gene_counts - 1
+
+# Define sample subsets for PRE and POST treatments
+pre_samples <- monotherapy$patientid[monotherapy$treatment_time == "PRE"]
+post_samples <- monotherapy$patientid[monotherapy$treatment_time == "POST"]
+
+# Ensure sample IDs in monotherapy match column names of expr_gene_counts
+pre_samples <- intersect(pre_samples, colnames(expr_gene_counts))
+post_samples <- intersect(post_samples, colnames(expr_gene_counts))
+
+# Subset expression data for PRE and POST samples
+expr_pre <- expr_gene_counts[, colnames(expr_gene_counts) %in% pre_samples]
+expr_post <- expr_gene_counts[, colnames(expr_gene_counts) %in% post_samples]
+
+# Create DESeq2 dataset objects and perform normalization and differential expression analysis
+dds_pre <- DESeqDataSetFromMatrix(countData = round(expr_pre), colData = monotherapy[monotherapy$treatment_time == "PRE", , drop=FALSE], design = ~ response_paper)
+dds_post <- DESeqDataSetFromMatrix(countData = round(expr_post), colData = monotherapy[monotherapy$treatment_time == "POST", , drop=FALSE], design = ~ response_paper)
+
+dds_pre <- DESeq(dds_pre)
+dds_post <- DESeq(dds_post)
+
+res_pre <- results(dds_pre, contrast = c("response_paper", "Responder", "Non-responder"))
+res_post <- results(dds_post, contrast = c("response_paper", "Responder", "Non-responder"))
+
+write.csv(res_pre, "~/BHK lab/ICB/ICB_Gide/files/res_pre_monotheapy.csv")
+sig_res_pre <- res_pre[!is.na(res_pre$padj) & res_pre$padj < 0.05, ]
+cat("Number of DEGs in PRE samples: ", nrow(sig_res_pre), "\n")
+ 
+DT::datatable(data.frame(sig_res_pre[1:13, 1:6]), caption = "All Significant DEGs (padj < 0.05)")
+
+
+sig_res_post <- res_post[!is.na(res_post$padj) & res_post$padj < 0.05, ]
+
+# Compute CPM and log-transform for visualization
+cpm_pre <- cpm(DGEList(counts = expr_pre), log = TRUE, prior.count = 1)
+cpm_post <- cpm(DGEList(counts = expr_post), log = TRUE, prior.count = 1)
+
+# Subset DEGs
+cpm_pre_degs <- cpm_pre[rownames(sig_res_pre), ]
+cpm_post_degs <- cpm_post[rownames(sig_res_post), ]
+
+
+# Generate heatmaps with response annotations
+pheatmap_pre <- pheatmap(cpm_pre_degs, cluster_rows = TRUE, cluster_cols = TRUE, show_rownames = TRUE, show_colnames = TRUE, color = colorRampPalette(c("blue", "white", "red"))(50), silent = TRUE, main = "PRE Treatment Heatmap (Monotherapy)")
+
+pheatmap_post <- pheatmap(cpm_post_degs, cluster_rows = TRUE, cluster_cols = TRUE, show_rownames = TRUE, show_colnames = TRUE, color = colorRampPalette(c("blue", "white", "red"))(50), silent = TRUE, main = "POST Treatment Heatmap (Monotherapy)")
+
+pheatmap_pre
+
+
+# Arrange heatmaps side by side
+#grid.arrange(pheatmap_pre$gtable, pheatmap_post$gtable, ncol = 2, widths = c(0.7, 0.3))
+
+```
+## Paper
+
+
+```{r Fig1A, fig.width= 8 , fig.height= 20}
+#2.Part d
+
+# diplay post samples
+pheatmap_post
+
+```
+
+### FIG 1C: Combination therapy
+
+A similar analysis on the combined anti-CTLA-4 and anti-PD-1 immunotherapy cohort identified 328 DEGs (adjusted p < 0.05) between responders (n = 24 PRE; n = 6 EDT) and non-responders (n = 8 PRE, n = 3 EDT; Figure 1C; Table S5).
+
+We found **135 DEGs** in our combination therapy analysis (adjusted p < 0.05) between responders (n = 24 PRE; n = 6 EDT/POST) and non-responders. The paper identified several key immune-related genes such as **CD8A, CD247, CD5, CD6, and CD69**, as well as genes involved in **NK cell-mediated cytotoxicity** (**CD96**), **T cell cytotoxicity** (**GZMK, CD274 [PD-L1], CD2, ITGAL**), **cytokine signaling** (**CXCL13, CCL4, CCR5, CCL5, CXCL9**), and the **TIGIT/CD226 axis**.
+
+#### Steps for Analysis
+
+1. **Data Processing**: HTSeq version 0.6.1 was used to obtain gene expression read counts.
+2. **Normalization**: Read counts were normalized using the `DESeq()` function in DESeq2.
+3. **Significance Testing**: Differential gene expression was performed using Wald tests and multiple testing corrections using Benjamini-Hochberg at an FDR of 5%.
+4. **Visualization**: Significant DEGs were visualized using CPM and heatmaps, identifying **135 DEGs** with an adjusted p-value < 0.05.
+
+```{r Fig1C  , fig.height= 40}
+# FIG 1C: Combination therapy
+
+# Access gene expression counts and annotation data
+expr_gene_counts <- assays(mae)[["expr_gene_counts"]]
+annot <- data.frame(rowData(mae@ExperimentList$expr_gene_counts))
+
+# Remove duplicate genes and set as rownames
+annot <- annot[!duplicated(annot$gene_name), ]
+annot <- annot[, c("gene_id", "gene_name")]
+
+# Match gene IDs and gene names, and remove rows without a gene name
+expr_gene_counts$gene_id <- rownames(expr_gene_counts)
+expr_gene_counts <- merge(expr_gene_counts, annot, by = "gene_id")
+expr_gene_counts <- expr_gene_counts[!is.na(expr_gene_counts$gene_name), ]
+rownames(expr_gene_counts) <- expr_gene_counts$gene_name
+expr_gene_counts$gene_id <- NULL
+expr_gene_counts$gene_name <- NULL
+
+# Revert log-transformed data (if necessary)
+expr_gene_counts <- 2^expr_gene_counts - 1
+
+# Define sample subsets for PRE and POST treatments
+pre_samples <- combo_therapy$patientid[combo_therapy$treatment_time == "PRE"]
+post_samples <- combo_therapy$patientid[combo_therapy$treatment_time == "POST"]
+
+# Ensure sample IDs in combo_therapy match column names of expr_gene_counts
+pre_samples <- intersect(pre_samples, colnames(expr_gene_counts))
+post_samples <- intersect(post_samples, colnames(expr_gene_counts))
+
+# Subset expression data for PRE and POST samples
+expr_pre <- expr_gene_counts[, colnames(expr_gene_counts) %in% pre_samples]
+expr_post <- expr_gene_counts[, colnames(expr_gene_counts) %in% post_samples]
+
+# Filter combo_therapy to include only matching samples for PRE
+colData_pre <- combo_therapy[combo_therapy$patientid %in% pre_samples & combo_therapy$treatment_time == "PRE", ]
+
+# Ensure the number of samples (columns in expr_pre) matches the number of rows in colData_pre
+expr_pre <- expr_pre[, colnames(expr_pre) %in% colData_pre$patientid]
+
+# Create DESeq2 dataset objects and perform normalization and differential expression analysis
+dds_pre <- DESeqDataSetFromMatrix(countData = round(expr_pre), colData = colData_pre, design = ~ response_paper)
+dds_post <- DESeqDataSetFromMatrix(countData = round(expr_post), colData = combo_therapy[combo_therapy$treatment_time == "POST", , drop=FALSE], design = ~ response_paper)
+
+dds_pre <- DESeq(dds_pre)
+dds_post <- DESeq(dds_post)
+
+res_pre <- results(dds_pre, contrast = c("response_paper", "Responder", "Non-responder"))
+res_post <- results(dds_post, contrast = c("response_paper", "Responder", "Non-responder"))
+
+write.csv(res_pre, "~/BHK lab/ICB/ICB_Gide/files/res_pre_combination.csv")
+
+sig_res_pre <- res_pre[!is.na(res_pre$padj) & res_pre$padj < 0.05, ]
+cat("Number of DEGs in PRE samples: ", nrow(sig_res_pre), "\n")
+
+DT::datatable(data.frame(sig_res_pre[1:13, 1:6]), caption = "All Significant DEGs (padj < 0.05)")
+
+
+sig_res_post <- res_post[!is.na(res_post$padj) & res_post$padj < 0.05, ]
+
+# Compute CPM and log-transform for visualization
+cpm_pre <- cpm(DGEList(counts = expr_pre), log = TRUE, prior.count = 1)
+cpm_post <- cpm(DGEList(counts = expr_post), log = TRUE, prior.count = 1)
+
+# Subset DEGs
+cpm_pre_degs <- cpm_pre[rownames(sig_res_pre), ]
+cpm_post_degs <- cpm_post[rownames(sig_res_post), ]
+
+
+# Generate heatmaps and store the results
+pheatmap_pre_comb <- pheatmap(cpm_pre_degs, cluster_rows = TRUE, cluster_cols = TRUE, 
+                              show_rownames = TRUE, show_colnames = TRUE, 
+                              color = colorRampPalette(c("blue", "white", "red"))(50), 
+                              silent = TRUE, main = "PRE Treatment Heatmap (Combination Therapy)")
+
+
+pheatmap_pre_comb
+
+```
+
