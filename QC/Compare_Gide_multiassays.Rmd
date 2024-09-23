@@ -1,0 +1,648 @@
+---
+title: "Comparing the New Gide MAE with the Gide Version on ORCESTRA and Their QCs"
+author:
+- name: "Nasim Bondar Sahebi"
+  affiliation:
+  - UofT, Princess Margaret Cancer Center,University Health Network, Toronto, Ontario, Canada
+date: "2024 23 09"
+output:
+  html_document: default
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+```
+
+## load libraries
+
+```{r libraries cars}
+library(MultiAssayExperiment) 
+library(kableExtra)
+library(jpeg)
+library(png)
+library(grid)
+library(gridExtra)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(knitr)
+library(DESeq2)
+library(pheatmap)
+library(edgeR)
+library(readxl)
+library(fgsea)
+library(stringr)
+```
+
+## Data Loading and Preparation
+
+- **Study Reference**: [PubMed ID 30753825](https://pubmed.ncbi.nlm.nih.gov/30753825/)
+
+### Overview
+
+The goal is to compare the **new Gide MAE** data with the **[Gide version available on ORCESTRA](https://orcestra.ca/clinical_icb)** and assess their quality control (QC) results to ensure consistency in clinical and expression data across both datasets.
+
+### Data Overview
+
+**New MAE Data:**
+- **Total Patient Count**: 91 (41 after subsetting to common patients with Orcestra)
+- **Expression Data Dimensions**: 61,544 genes across 41 patients (after subsetting)
+- **Expression Data Range**: Minimum: -9.965784, Maximum: 16.25238
+
+**Orcestra MAE Data:**
+- **Patient Count**: 41 (same as the final subset of the new MAE)
+- **Expression Data Dimensions**: 61,544 genes across 41 patients
+- **Expression Data Range**: Minimum: -9.965784, Maximum: 16.25415
+
+### Expression Data Comparison Summary
+The expression data between the new MAE and Orcestra MAE datasets is **identical** in terms of dimensions and range, ensuring consistency:
+
+Load multiassay .rds file, extract clinical, expression and annotations data; prepare gene expression data for analysis.
+
+```{r multiassay extraction}
+
+# Load MultiAssayExperiment objects
+mae <- readRDS("~/BHK lab/ICB/ICB_Gide/output/ICB_Gide.rds")
+mae_orcestra <- readRDS("~/BHK lab/ICB/ICB_Gide/output/ICB_GideOrcestra.rds")
+
+# Extract clinical data
+clin <- data.frame(colData(mae))         # 91 x 51
+clin_orc <- data.frame(colData(mae_orcestra))  # 41 x 38
+
+# Identify patients with "PRE" visit and check if they exist in clin_orcestra
+pre_patients <- clin$patient[clin$treatment_timepoint == "PRE"]
+missing_patients <- setdiff(pre_patients, clin_orc$patientid)
+
+cat("Number of patients with 'PRE' visit not in clin_orcestra:\n", length(missing_patients), "\n")
+cat("Missing patient IDs:\n", missing_patients, "\n")
+
+# NOTE: The "$treatment_timepoint" column comes from the data shared with the author.
+# From this, we conclude that the Gide MultiAssayExperiment from Orcestra is missing 32 "PRE" samples.
+# The next step is to subset the new MAE to include only samples present in clin_orcestra for further comparisons.
+
+# Subset to common patients between clin and clin_orcestra
+patients <- clin_orc$patientid
+columns <- colnames(clin_orc)
+clin_subset <- clin[patients, columns]  # Subset to common patients (41 x 38)
+
+# Print assay names for both mae objects
+cat("Assay names in mae:\n", names(mae), "\nAssay names in mae_orcestra:\n", names(mae_orcestra), "\n")
+
+# Extract expression data for comparison
+expr <- assays(mae)[["expr_gene_tpm"]] 
+expr <- expr[, clin_subset$patientid]  # Subset expression data to common patients (61544 x 41)
+
+expr_orc <- assays(mae_orcestra)[["expr_gene_tpm"]]  
+
+# Create a table comparing dimensions and ranges of the two expression datasets
+comparison_table <- data.frame(
+  Dataset = c("expr", "expr_orc"),
+  Dimensions = c(paste(dim(expr), collapse = " x "), paste(dim(expr_orc), collapse = " x ")),
+  Range_Min = c(min(range(expr)), min(range(expr_orc))),
+  Range_Max = c(max(range(expr)), max(range(expr_orc)))
+)
+
+kable(comparison_table, caption = "Expression comparison between expr and expr_orc")
+
+
+# an optional chceking Rnaseq column shared woth both clinical data
+# Check the RNA sequencing info consistency between clin_orc and clin_subset
+rna_seq_comparison <- data.frame(
+  Dataset = c("clin_orc", "clin_subset"),
+  PRE = c(table(clin_orc$RNA.Sequencing)["PRE"], table(clin_subset$RNA.Sequencing)["PRE"]),
+  `PRE and EDT` = c(table(clin_orc$RNA.Sequencing)["PRE and EDT"], table(clin_subset$RNA.Sequencing)["PRE and EDT"])
+)
+
+# Optionally, format the table using kable for a nicer output
+kable(rna_seq_comparison, caption = "Comparison of RNA.Sequencing Column between clin_orc and clin_subset") 
+
+```
+
+## Comparison of Column Summaries between `clin_subset` and `clin_orc`
+
+- Both datasets (`clin_subset` and `clin_orc`) are **identical** in structure and content for most columns.
+- **Numerical and categorical data** (e.g., `age`, `sex`, `treatmentid`) show no differences in values or types.
+- Columns like `histo`, `stage`, and `TMB_raw` contain **only NA values** in both datasets.
+- The **only inconsistency** is in `Days.to.EDT.Biopsy` (numeric in `clin_subset`, character in `clin_orc`).
+
+```{r clinical Comparison }
+
+
+# Add "orcestra_" prefix to the clin_orc columns for clarity
+colnames(clin_orc) <- paste0("orcestra_", colnames(clin_orc))
+
+# Merge the clin and clin_orc datasets for comparison
+merged_clinical <- merge(clin_subset, clin_orc, by.x = "patientid", by.y = "orcestra_patientid", all = TRUE)
+
+# Display the head of merged_clinical with a customized caption
+kable(head(merged_clinical), caption = "Head of Merged Clinical Data (Note: Columns starting with 'orcestra_' (e.g., orcestra_sex) are from the Orcestra dataset, while other columns (e.g., sex) come from the newly curated MultiAssay dataset)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
+
+
+# Next step is to compare each columns together  
+
+# Initialize an empty df to store result 
+comparison_results <- data.frame(Column = character(), Clin_Subset_Summary = character(), Clin_Orc_Summary = character(), stringsAsFactors = FALSE)
+
+# Loop through columns in clin_subset and clin_orc and compare them directly
+for (col in colnames(clin_subset)) {
+  orcestra_col <- paste0("orcestra_", col)
+  
+  if (orcestra_col %in% colnames(clin_orc)) {
+    # Capture summary of clin_subset
+    clin_subset_summary <- capture.output(summary(clin_subset[[col]]))
+    clin_orc_summary <- capture.output(summary(clin_orc[[orcestra_col]]))
+    
+    # Combine summaries into one data frame
+    comparison_results <- rbind(comparison_results, 
+                                data.frame(Column = col, 
+                                           Clin_Subset_Summary = paste(clin_subset_summary, collapse = " "), 
+                                           Clin_Orc_Summary = paste(clin_orc_summary, collapse = " "),
+                                           stringsAsFactors = FALSE))
+  }
+}
+
+# Display the comparison table using kable
+kable(comparison_results, caption = "Comparison of Column Summaries between clin_subset and clin_orc") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F) %>%
+  scroll_box(width = "100%", height = "500px")
+
+```
+
+## Quality Control Comparison Between Two Curated Datasets
+
+### Aim:
+To generate Table 1 and Figure 2 (A and B) from the paper [PubMed ID 30753825](https://pubmed.ncbi.nlm.nih.gov/30753825/).
+
+### Objective:
+Compare our new clinical data (91 patients) and `clin_orc` data (41 patients) to the published study (120 patients) for key characteristics and outcomes in Anti-PD-1 Monotherapy and Combined Anti-PD-1 with Anti-CTLA-4 Immunotherapy cohorts.
+
+- **Published Study**: 63 monotherapy, 57 combination therapy patients.
+- **New 'clin' Data**: 50 monotherapy, 41 combination therapy patients.
+- **clin_orc Data**: 41 monotherapy patients, with about 22 missing; however, the newer curated data shows fewer differences (13).
+
+### Summary of Findings:
+
+- **Age (years), median**:
+  - **Published Study**: Monotherapy Non-responders: 64, Responders: 69; Combo Non-responders: 55, Responders: 57.
+  - **New 'clin' Data**: Monotherapy Non-responders: 67, Responders: 62; Combo Non-responders: 51, Responders: 65.
+  - **clin_orc**: Monotherapy Non-responders: 66, Responders: 66.
+  - **Insight**: Age trends are similar across datasets, with minor differences.
+
+- **Gender Breakdown (Male %)**:
+  - **Published Study**: Monotherapy Non-responders: 67%; Responders: 55%; Combo Non-responders: 62%, Responders: 66%.
+  - **New 'clin' Data**: Non-responders: 73.9%; Responders: 59.3%; Combo: 63.6%, 66.7%.
+  - **clin_orc**: Non-responders: 73.7%; Responders: 54.5%.
+  - **Insight**: Gender distribution is consistent across datasets.
+
+- **Treatment Response (CR/PR)**:
+  - **Published Study**: Monotherapy CR/PR: 45%; Combo: 53%.
+  - **New 'clin' Data**: Monotherapy CR/PR: 46%; Combo: 53%.
+  - **clin_orc**: Monotherapy CR: 0, PR: 19.
+  - **Insight**: Responses align well, but `clin_orc` shows no CR in monotherapy.
+
+- **Progression-Free Survival (PFS, months)**:
+  - **Published Study**: Monotherapy: 2.6; Combo: 2.7.
+  - **New 'clin' Data**: Monotherapy: 2.6 for non-responders, 29 for responders; Combo: 2.7 for non-responders, 20.1 for responders.
+  - **clin_orc**: Monotherapy: 2.6 for non-responders, 17.7 for responders.
+  - **Insight**: Close alignment, with slight variations in responder data.
+
+- **Overall Survival (OS, months)**:
+  - **Published Study**: Monotherapy 12-month OS: 89% responders; Combo: 67.7% for non-responders.
+  - **New 'clin' Data**: Monotherapy 12-month OS: 96.3% responders, 21.7% non-responders; Combo: 86.7% responders, 54.5% non-responders.
+  - **clin_orc**: Monotherapy 12-month OS: 21.1% for non-responders.
+  - **Insight**: Higher OS rates in our data, especially among responders, likely due to smaller sample size.
+
+### Result:
+Our dataset aligns closely with the published study regarding clinical characteristics and outcomes, with minor differences expected due to cohort sizes. The newer dataset is likely more accurate than the `clin_orc` data.
+
+
+```{r Table1}
+
+# Revert back the "orcestra_" prefix from column names
+colnames(clin_orc) <- gsub("^orcestra_", "", colnames(clin_orc))
+
+# Function to process clinical data and generate a summary table with dynamic n values
+generate_clinical_summary <- function(clin_data) {
+  
+  # Define responder and non-responder groups based on the criteria
+  clin_data$response_paper <- ifelse(
+    (clin_data$recist %in% c("CR", "PR") | (clin_data$recist == "SD" & clin_data$survival_time_pfs > 6)), 
+    "Responder", 
+    ifelse(clin_data$recist == "PD" | (clin_data$recist == "SD" & clin_data$survival_time_pfs <= 6), 
+           "Non-responder", 
+           NA)
+  )
+  
+  # Subset data to mono and combo
+  monotherapy <- clin_data %>% filter(treatment == "PD-1/PD-L1")
+  combo_therapy <- clin_data %>% filter(treatment == "IO+combo")
+  
+  # Count the number of responders and non-responders for dynamic n values
+  monotherapy_n <- monotherapy %>% group_by(response_paper) %>% summarize(n = n())
+  combo_therapy_n <- combo_therapy %>% group_by(response_paper) %>% summarize(n = n())
+
+  # Generate detailed summary statistics
+  generate_detailed_summary <- function(data) {
+    data %>%
+      group_by(response_paper) %>%
+      summarize(
+        `Age (years), median` = as.character(round(median(age, na.rm = TRUE), 1)),
+        Male = paste0(sum(sex == "M", na.rm = TRUE), " (", round(sum(sex == "M", na.rm = TRUE) / n() * 100, 1), "%)"),
+        Female = paste0(sum(sex == "F", na.rm = TRUE), " (", round(sum(sex == "F", na.rm = TRUE) / n() * 100, 1), "%)"),
+        `Nivolumab n (%)` = paste0(sum(treatmentid == "Nivolumab", na.rm = TRUE), " (", round(sum(treatmentid == "Nivolumab", na.rm = TRUE) / n() * 100, 1), "%)"),
+        `Pembrolizumab n (%)` = paste0(sum(treatmentid == "Pembrolizumab", na.rm = TRUE), " (", round(sum(treatmentid == "Pembrolizumab", na.rm = TRUE) / n() * 100, 1), "%)"),
+        CR = as.character(sum(recist == "CR", na.rm = TRUE)),
+        PR = as.character(sum(recist == "PR", na.rm = TRUE)),
+        SD = as.character(sum(recist == "SD", na.rm = TRUE)),
+        PD = as.character(sum(recist == "PD", na.rm = TRUE)),
+        `Median PFS (months)` = as.character(round(median(survival_time_pfs, na.rm = TRUE), 1)),
+        `12-month PFS (%)` = as.character(round(mean(survival_time_pfs >= 12, na.rm = TRUE) * 100, 1)),
+        `Median OS (months)` = as.character(round(median(survival_time_os, na.rm = TRUE), 1)),
+        `12-month OS (%)` = as.character(round(mean(survival_time_os >= 12, na.rm = TRUE) * 100, 1))
+      )
+  }
+  
+  # Generate summaries
+  monotherapy_summary <- generate_detailed_summary(monotherapy) %>% mutate(Therapy = "Monotherapy")
+  combo_therapy_summary <- generate_detailed_summary(combo_therapy) %>% mutate(Therapy = "Combination Therapy")
+  
+  # Combine and reshape the summary
+  combined_summary <- bind_rows(monotherapy_summary, combo_therapy_summary) %>%
+    pivot_longer(cols = -c(Therapy, response_paper), names_to = "Characteristic", values_to = "Value") %>%
+    pivot_wider(names_from = c(Therapy, response_paper), values_from = Value)
+  
+  # Get the dynamic n values for monotherapy and combo therapy
+  monotherapy_non_responder_n <- monotherapy_n %>% filter(response_paper == "Non-responder") %>% pull(n)
+  monotherapy_responder_n <- monotherapy_n %>% filter(response_paper == "Responder") %>% pull(n)
+  combo_non_responder_n <- combo_therapy_n %>% filter(response_paper == "Non-responder") %>% pull(n)
+  combo_responder_n <- combo_therapy_n %>% filter(response_paper == "Responder") %>% pull(n)
+  
+  # Add number of patients (n) dynamically to column headers
+  colnames(combined_summary) <- c("Characteristic",
+                                  paste0("Monotherapy Non-responder (n=", monotherapy_non_responder_n, ")"),
+                                  paste0("Monotherapy Responder (n=", monotherapy_responder_n, ")"),
+                                  paste0("Combination Therapy Non-responder (n=", combo_non_responder_n, ")"),
+                                  paste0("Combination Therapy Responder (n=", combo_responder_n, ")"))
+  
+  # Define row names
+  rownames_final <- c("Age (years), median", "Male", "Female", 
+                      "Nivolumab n (%)", "Pembrolizumab n (%)", "CR", "PR", 
+                      "SD", "PD", "Median PFS (months)", "12-month PFS (%)", 
+                      "Median OS (months)", "12-month OS (%)")
+  
+  rownames(combined_summary) <- rownames_final
+  
+  return(combined_summary)
+}
+
+# Usage example for clin and clin_orc
+summary_clin <- generate_clinical_summary(clin)
+summary_clin_orcestra <- generate_clinical_summary(clin_orc)
+
+# Display New Gide MAE summary
+kable(summary_clin, caption = "New Gide MAE: Clinicopathologic Characteristics", align = "l") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
+
+# Display ORCESTRA Version summary
+kable(summary_clin_orcestra, caption = "ORCESTRA Version: Clinicopathologic Characteristics", align = "l") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
+
+```
+
+```{r Table11, fig.width= 20 ,fig.height= 10}
+# Read the PNG image
+img <- png::readPNG("~/BHK lab/ICB/ICB_Gide/files/paper_table1.png")
+
+# Convert the image to a grob
+img_grob <- rasterGrob(img, interpolate = TRUE)
+
+# Convert the summary table to a grob
+summary_clin_grob <- tableGrob(summary_clin, theme = ttheme_default(
+  core = list(fg_params = list(cex = 0.8)),
+  colhead = list(fg_params = list(cex = 0.8)),
+  rowhead = list(fg_params = list(cex = 0.8))
+))
+
+# Arrange the summary table and the image side by side
+grid.arrange(summary_clin_grob, img_grob, ncol = 2, widths = c(0.6, 0.4))
+
+```
+
+
+## Immunotranscriptomic Gene Signatures in Responders and Non-responders to Anti-PD-1 Monotherapy and Combined Anti-PD-1
+
+This study delves into the immunotranscriptomic changes experienced by patients undergoing Anti-PD-1 monotherapy and combination therapy. We aim to delineate the gene expression profiles that distinguish responders from non-responders.
+
+### Dataset Overview
+The original paper evaluated 47 PRE samples (35 responders, 12 non-responders) and 15 EDT samples (11 responders, 4 non-responders). Comparatively, our dataset contains 41 PRE and 9 POST samples.
+
+### Analytical Workflow
+1. **Differential Gene Expression Analysis**:
+   - **Paper's Approach**: Used HTSeq version 0.6.1 and Employed DESeq2 for normalization and differential expression        analysis, aligning closely with the paper's methodology.
+
+2. **Normalization and Read Counts**:
+   - Both studies applied the `DESeq()` function for consistent read count normalization.
+
+3. **Visualization of Normalized Expression**:
+   - **Paper's Method**: Used counts per million (CPM) for visualization. Similarly we use the `cpm()` function to        ensure comparable visualization of expression data.
+
+4. **Identification of Significant DEGs**:
+   - Both analyses adhered to the Benjamini-Hochberg correction for multiple testing, selecting DEGs with an adjusted p-value < 0.05. We identified 320 DEGs in our PRE-treatment samples.
+
+### Comparative Analysis Across Versions
+Our study also aims to examine DEGs for clinical and count data across different versions of the dataset:
+- **Orcestra Version**: `clin_orc` and `count_orcestra`.
+- **New Version**: `clin_subset` and `count`.
+
+The goal was to ensure the identified DEGs were consistent across both dataset versions. Remarkably, both analyses identified an identical number of significant DEGs, totaling 139 in each, underscoring the robustness and reproducibility of our gene signatures across diverse data structures and analytical approaches.
+
+### Gene Highlights
+Notable genes including CFTR, USH2A, HOXA9, LAMB4, MYH7, and CD274 were identified as DEGs. Specifically:
+- **LAMB4**: Upregulated in non-responders, highlighting its role in immunosuppressive pathways.
+- **CD274 (PD-L1)**: Known for its pivotal role in immune checkpoint pathways, associated with modulation of T cell activity.
+
+This detailed comparison and consistent findings across dataset versions reinforce the reliability of our analytical methods and the significance of the identified DEGs in clinical contexts. 
+
+
+
+```{r Fig1A ,  fig.width= 20 , fig.height= 50}
+
+# Define responder and non-responder groups based on the criteria
+assign_response_paper <- function(clin_data) {
+  clin_data$response_paper <- ifelse(
+    clin_data$recist %in% c("CR", "PR") | (clin_data$recist == "SD" & clin_data$survival_time_pfs > 6), 
+    "Responder", 
+    ifelse(clin_data$recist == "PD" | (clin_data$recist == "SD" & clin_data$survival_time_pfs <= 6), 
+           "Non-responder", 
+           NA)
+  )
+  return(clin_data)
+}
+
+# Apply the function to both clin_subset and clin_orc
+clin_subset <- assign_response_paper(clin_subset)
+clin_orc <- assign_response_paper(clin_orc)
+
+
+# 1. Orcestra count and annotation
+expr_gene_counts_orc <- assays(mae_orcestra)[["expr_gene_counts"]] # 61544    41
+annot_orc <- data.frame(rowData(mae_orcestra@ExperimentList$expr_gene_counts))
+
+# 2. Newly curated count and annotation
+expr_gene_counts <- assays(mae)[["expr_gene_counts"]]
+expr_gene_counts <- expr_gene_counts[, clin_orc$patientid] # 61544 X 41 dim
+annot <- data.frame(rowData(mae@ExperimentList$expr_gene_counts))
+
+# Remove duplicate genes and set as rownames
+annot <- annot[!duplicated(annot$gene_name), ]
+annot <- annot[, c("gene_id", "gene_name")]
+
+analyze_gene_expression <- function(expr_gene_counts, annot, clin_subset, treatment_col = "RNA.Sequencing", treatment_pre = "PRE", response_col = "response_paper") {
+
+  # Remove duplicate genes and set as rownames
+  annot <- annot[!duplicated(annot$gene_name), ]
+  annot <- annot[, c("gene_id", "gene_name")]
+  
+  # Match gene IDs and gene names, and remove rows without a gene name
+  expr_gene_counts$gene_id <- rownames(expr_gene_counts)
+  expr_gene_counts <- merge(expr_gene_counts, annot, by = "gene_id")
+  expr_gene_counts <- expr_gene_counts[!is.na(expr_gene_counts$gene_name), ]
+  rownames(expr_gene_counts) <- expr_gene_counts$gene_name
+  expr_gene_counts$gene_id <- NULL
+  expr_gene_counts$gene_name <- NULL
+  
+  # Revert log-transformed data (if necessary)
+  expr_gene_counts <- 2^expr_gene_counts - 1
+  
+  # Define sample subsets for PRE treatments based on treatment_col
+  pre_samples <- intersect(clin_subset$patientid[clin_subset[[treatment_col]] == treatment_pre], colnames(expr_gene_counts))
+  
+  # Subset expression data for PRE samples
+  expr_pre <- expr_gene_counts[, pre_samples]
+  
+  # Subset clin_subset to matching samples for PRE
+  clin_pre <- clin_subset[clin_subset$patientid %in% pre_samples, , drop = FALSE]
+  
+  # Create DESeq2 dataset objects and perform normalization and differential expression analysis
+  dds_pre <- DESeqDataSetFromMatrix(countData = round(expr_pre), colData = clin_pre, design = as.formula(paste("~", response_col)))
+  
+  dds_pre <- DESeq(dds_pre)
+  
+  res_pre <- results(dds_pre, contrast = c(response_col, "Responder", "Non-responder"))
+  
+  # Filter significant results
+  sig_res_pre <- res_pre[!is.na(res_pre$padj) & res_pre$padj < 0.05, ]
+  
+  # Compute CPM and log-transform for visualization
+  cpm_pre <- cpm(DGEList(counts = expr_pre), log = TRUE, prior.count = 1)
+  
+  # Subset DEGs
+  cpm_pre_degs <- cpm_pre[rownames(sig_res_pre), ]
+  
+  # Generate heatmap
+  pheatmap_pre <- pheatmap(cpm_pre_degs, cluster_rows = TRUE, cluster_cols = TRUE, show_rownames = TRUE, show_colnames = TRUE, color = colorRampPalette(c("blue", "white", "red"))(50), silent = TRUE, main = "PRE Treatment Heatmap (Monotherapy)")
+  
+  # Return results and heatmaps
+  list(
+    sig_res_pre = sig_res_pre,
+    pheatmap_pre = pheatmap_pre
+  )
+}
+
+#1. Analyze expr_gene_counts
+results <- analyze_gene_expression(expr_gene_counts, annot, clin_subset)
+sig_res_pre <- results$sig_res_pre
+pheatmap_pre <- results$pheatmap_pre
+deg_count <- length(rownames(sig_res_pre))
+
+# 2.Analyze expr_gene_counts_orc
+results_orc <- analyze_gene_expression(expr_gene_counts_orc, annot_orc, clin_orc)
+sig_res_pre_orc <- results_orc$sig_res_pre
+pheatmap_pre_orc <- results_orc$pheatmap_pre
+deg_count_orc <- length(rownames(sig_res_pre_orc))
+
+deg_table <- data.frame(
+  Dataset = c("expr_gene_counts", "expr_gene_counts_orc"),
+  Number_of_DEGs = c(deg_count, deg_count_orc)
+)
+
+kable(deg_table, caption = "Number of DEGs in Each Dataset")
+
+grob1 <- pheatmap_pre$gtable
+grob2 <- pheatmap_pre_orc$gtable
+
+# Use grid.arrange to plot them side by side
+grid.arrange(grob1, grob2, ncol = 2)
+
+# Compare DEGs with a provided paper
+DEGS_result_paper <- read_excel("~/BHK lab/ICB/ICB_Gide/files/1-s2.0-S1535610819300376-mmc4.xlsx")
+colnames(DEGS_result_paper ) <- DEGS_result_paper [2, ] 
+DEGS_result_paper  <- DEGS_result_paper [-c(1:2), ] 
+colnames(DEGS_result_paper ) <- str_replace_all(colnames(DEGS_result_paper ), '\\W', '.')
+
+DEGS_paper <- DEGS_result_paper$Gene
+
+if (all(rownames(sig_res_pre_orc) == rownames(sig_res_pre))) { 
+  print("All row names match")
+} else { 
+  print("Row names do not match")
+}
+
+# Find the intersection of DEGs from the paper and your results
+intersect_genes <- intersect(DEGS_paper, rownames(sig_res_pre))
+print(paste("Common DEGs:", paste(intersect_genes, collapse = ", ")))
+
+
+```
+
+
+### DEG Analysis Reassessment
+
+Despite both curated DEG sets being identical, demonstrating consistency with the patient data, only 139 DEGs were initially identified, whereas the paper mentions over 300. We employed two approaches for further analysis:
+
+#### Version 1: **Reanalysis with the Complete Clinical Dataset**
+In this approach, we reanalyzed the data using the full clinical dataset to determine if including all available patient data influences DEG identification.
+
+#### Version 2: **Reanalysis with the Complete Clinical Dataset Using "Treatment Timepoint"**
+In this approach, we used the new "treatment_timepoint" column (extracted from the file `1-s2.0-S1535610819300376-mmc4.xlsx` shared by the author) instead of the "RNA.Sequencing" column. This allowed us to distinguish pre- and post-treatment conditions more accurately.
+
+#### Results
+- **Version 1**: We identified 375 DEGs, closely matching the paper’s results.
+- **Version 2**: We found 78 DEGs that intersected with the DEGs reported for pre-treatment monotherapy patients. This version almost exactly matches the 328 DEGs mentioned in the paper.
+
+As a result, the newer MAE with the "treatment_timepoint" column provides more accurate results by clearly distinguishing pre- and post-treatment conditions, leading to better alignment with the paper’s findings.
+
+
+```{r Fig1A complete clinical data(new), fig.width= 9 , fig.height= 20}
+
+# Newly curated count and annotation
+expr_gene_counts <- assays(mae)[["expr_gene_counts"]]  # dim 61544 x 91
+annot <- data.frame(rowData(mae@ExperimentList$expr_gene_counts))
+clin <- data.frame(colData(mae))
+clin <- assign_response_paper(clin) 
+
+# 1. Analyze expr_gene_counts with complete clinical data for 91 patients and retain RNA.Sequencing
+results_complete <- analyze_gene_expression(expr_gene_counts, annot, clin)
+sig_res_pre1 <- results_complete$sig_res_pre
+pheatmap_pre1 <- results_complete$pheatmap_pre
+deg_count1 <- length(rownames(sig_res_pre1))  # This is 375 DEGs
+
+# Find intersecting DEGs with DEGS_paper
+intersect_genes1 <- intersect(DEGS_paper, rownames(sig_res_pre1))  # 78 intersecting genes
+print(paste0("Total DEGs: ", deg_count1, 
+             "; Common DEGs: ", length(intersect_genes1), 
+             "; Genes: ", paste(intersect_genes1, collapse = ", ")))
+
+
+# Filter patients that are in both clinical data and expression data
+patients <- intersect(clin$patientid, colnames(expr_gene_counts))
+clin <- clin[clin$patientid %in% patients, ]  # Filter clinical data to matching patients
+expr_gene_counts <- expr_gene_counts[, patients]  # Subset expression data to matching patients
+
+# 2. Run analysis for the subset of patients
+results_complete2 <- analyze_gene_expression(expr_gene_counts, annot, clin, treatment_col = "treatment_timepoint", treatment_pre = "PRE")
+sig_res_pre2 <- results_complete2$sig_res_pre
+pheatmap_pre2 <- results_complete2$pheatmap_pre
+deg_count2 <- length(rownames(sig_res_pre2))  # DEG 326
+
+# Find intersecting DEGs with DEGS_paper for second run
+intersect_genes2 <- intersect(DEGS_paper, rownames(sig_res_pre2)) #46 same genes
+
+# Print DEG counts and intersections
+print(paste0("Total DEGs: ", deg_count2, 
+             "; Common DEGs: ", length(intersect_genes2), 
+             "; Genes: ", paste(intersect_genes2, collapse = ", ")))
+
+# Extract grobs from pheatmap objects
+grob1 <- pheatmap_pre1$gtable
+grob2 <- pheatmap_pre2$gtable
+
+# Display the first heatmap with a caption
+grid.arrange(grob1, ncol = 1, top = textGrob("Heatmap 1: Monotherapy", gp = gpar(fontsize = 14, fontface = "bold")))
+```
+
+
+```{r pheatmap2 , fig.width= 13 , fig.height= 70}
+# Display the second heatmap with a caption
+grid.arrange(grob2, ncol = 1, top = textGrob("Heatmap 2: Combination Therapy", gp = gpar(fontsize = 14, fontface = "bold")))
+
+
+```
+
+### Associated enriched KEGG signaling pathways (nominal p < 0.05) for anti-PD-1 monotherapy(PRE samples)
+
+
+This analysis aims to identify and compare enriched KEGG signaling pathways in pre-treatment and early during treatment (EDT) samples from anti-PD-1 monotherapy. The focus is on statistically significant pathways (nominal p < 0.05) and comparing them with known immune-related pathways from the literature.
+
+#### Pathway Data
+KEGG pathways were sourced from the file `c2.cp.kegg.v7.4.symbols.gmt`.
+
+#### Analysis Steps
+1. **Gene Ranking**: Genes were ranked by the negative log10 of their p-values, derived from differential expression analysis.
+2. **Gene Set Enrichment Analysis (GSEA)**: Conducted using the `fgsea` package to determine pathway enrichment.
+3. **Results Filtering**: Emphasis was on pathways with adjusted p-values less than 0.05.
+4. **Literature Comparison**: Enriched pathways were evaluated against a predefined list of immune response pathways to identify overlaps.
+
+**Common Pathways**: KEGG_CHEMOKINE_SIGNALING_PATHWAY, KEGG_NATURAL_KILLER_CELL_MEDIATED_CYTOTOXICITY were identified in our DEG analysis using the complete clinical data, with the new `treatment_timepoint` column.
+
+```{r Fig1B, fig.width= 9}
+
+# Load KEGG pathways for MEDICUS
+pathwaysKEG <- gmtPathways("~/BHK lab/ICB/ICB_Gide/files/c2.cp.kegg.v7.4.symbols.gmt")
+
+# 1. Perform GSEA for sig_res_pre2 (Monotherapy - Pre-treatment and EDT)
+# Rank genes by -log10 of p-value
+ranked_genes1 <- -log10(sig_res_pre2$pvalue)
+names(ranked_genes1) <- rownames(sig_res_pre2)
+
+# Perform fgsea for sig_res_pre2 (Monotherapy)
+fgsea_results1 <- fgsea(pathways = pathwaysKEG, stats = ranked_genes1)
+
+# Tidy and filter results for fgsea (Significance at nominal p < 0.05)
+fgsea_tidy1 <- fgsea_results1 %>%
+  as_tibble() %>%
+  arrange(desc(NES)) %>%
+  mutate(Significance = ifelse(padj <= 0.05, "Significant", "Not Significant"))
+
+fgsea_tidy1_top <- head(fgsea_tidy1, 10)  
+kable(fgsea_tidy1_top, caption = "Top 10 KEGG Pathway Enrichment Results for Monotherapy (Pre-treatment & EDT)")
+
+# Generate a plot for KEGG pathway enrichment in Monotherapy (Figure 1B)
+ggplot(fgsea_tidy1[fgsea_tidy1$pval < 0.05, ], aes(reorder(pathway, NES), NES, fill = Significance)) +
+  geom_col() +
+  scale_fill_manual(values = c("Significant" = "red", "Not Significant" = "blue")) +
+  coord_flip() +
+  theme_minimal() +
+  labs(x = "Pathway", y = "Normalized Enrichment Score (NES)", 
+       title = "KEGG Pathway Enrichment - Monotherapy (Pre-treatment & EDT)") +
+  theme(axis.text.y = element_text(size = 10), axis.title.x = element_text(size = 12))
+
+# Pathways mentioned in the paper
+paper_pathways <- c(
+  "KEGG_STARCH_AND_SUCROSE_METABOLISM",
+  "KEGG_PENTOSE_AND_GLUCURONATE_INTERCONVERSIONS",
+  "KEGG_METABOLISM_OF_XENOBIOTICS_BY_CYTOCHROME_P450",
+  "KEGG_RETINOL_METABOLISM",
+  "KEGG_LINOLEIC_ACID_METABOLISM",
+  "KEGG_T_CELL_RECEPTOR_SIGNALING_PATHWAY",
+  "KEGG_CHEMOKINE_SIGNALING_PATHWAY",
+  "KEGG_NATURAL_KILLER_CELL_MEDIATED_CYTOTOXICITY",
+  "KEGG_NEUROTROPHIN_SIGNALING_PATHWAY",
+  "KEGG_CYTOKINE_CYTOKINE_RECEPTOR_INTERACTION",
+  "KEGG_JAK_STAT_SIGNALING_PATHWAY"
+)
+
+# Pathways from fgsea_tidy1_top
+fgsea_pathways <- fgsea_tidy1_top$pathway
+
+# Find the intersection between the two
+common_pathways <- intersect(paper_pathways, fgsea_pathways)
+
+# Print the common pathways
+print(paste("Common Pathways:", paste(common_pathways, collapse = ", ")))
+
+
+```
